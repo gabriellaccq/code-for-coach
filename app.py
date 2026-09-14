@@ -193,6 +193,26 @@ def manager_dashboard():
                 players = s.get_team_players(team_id)
                 st.write(', '.join('#{} {}'.format(p['number'], p['name']) for p in players) or 'No players yet.')
 
+                team_row = s.get_team(team_id)
+                with st.form('edit_team_{}'.format(team_id)):
+                    new_name = st.text_input('Team name', value=team_row[1], key='tn_{}'.format(team_id))
+                    new_coach = st.selectbox('Main coach', options=[c[0] for c in coaches],
+                                              index=[c[0] for c in coaches].index(coach_id) if coach_id in [c[0] for c in coaches] else 0,
+                                              format_func=lambda cid: coach_names[cid], key='tc_{}'.format(team_id))
+                    new_privacy = st.checkbox('Privacy mode', value=bool(team_row[4]), key='tp_{}'.format(team_id))
+                    save = st.form_submit_button('Save changes')
+                if save:
+                    s.update_team(team_id, new_name, new_coach, new_privacy)
+                    st.success('Team updated.')
+                    st.rerun()
+
+                confirm_del = st.checkbox('I understand this permanently deletes the team, its roster links, position rankings and match history.',
+                                           key='confirm_del_team_{}'.format(team_id))
+                if st.button('Delete team', key='del_team_{}'.format(team_id), disabled=not confirm_del):
+                    s.delete_team(team_id)
+                    st.success('Team deleted.')
+                    st.rerun()
+
         st.divider()
         st.markdown('##### Register a new team')
         if not coaches:
@@ -222,7 +242,26 @@ def manager_dashboard():
         st.subheader('Coaches')
         coaches = s.get_all_coaches(org_id)
         for cid, name, team_name in coaches:
-            st.write('**{}** — {}'.format(name, team_name or 'no team yet'))
+            with st.expander('{} — {}'.format(name, team_name or 'no team yet')):
+                coach_row = s.get_coach(cid)
+                with st.form('edit_coach_{}'.format(cid)):
+                    new_name = st.text_input('Name', value=coach_row[2], key='cn_{}'.format(cid))
+                    new_email = st.text_input('Email', value=coach_row[3], key='ce_{}'.format(cid))
+                    save = st.form_submit_button('Save changes')
+                if save:
+                    s.update_coach(cid, new_name, new_email)
+                    st.success('Coach updated.')
+                    st.rerun()
+
+                confirm_del = st.checkbox('I understand this permanently deletes this coach account.',
+                                           key='confirm_del_coach_{}'.format(cid))
+                if st.button('Delete coach', key='del_coach_{}'.format(cid), disabled=not confirm_del):
+                    err = s.delete_coach(cid)
+                    if err:
+                        st.error(err)
+                    else:
+                        st.success('Coach deleted.')
+                        st.rerun()
         st.divider()
         st.markdown('##### Register a new coach')
         with st.form('new_coach'):
@@ -241,7 +280,28 @@ def manager_dashboard():
         st.subheader('Players')
         players = s.get_all_players(org_id)
         for pid, number, name in players:
-            st.write('#{} {}'.format(number, name))
+            with st.expander('#{} {}'.format(number, name)):
+                player_row = s.get_player(pid)
+                with st.form('edit_player_{}'.format(pid)):
+                    new_name = st.text_input('Name', value=player_row[2], key='pn_{}'.format(pid))
+                    new_number = st.number_input('Squad number', min_value=1, max_value=99, step=1,
+                                                  value=player_row[3], key='pnum_{}'.format(pid))
+                    new_email = st.text_input('Email', value=player_row[4], key='pe_{}'.format(pid))
+                    save = st.form_submit_button('Save changes')
+                if save:
+                    err = s.update_player(pid, new_name, int(new_number), new_email)
+                    if err:
+                        st.error(err)
+                    else:
+                        st.success('Player updated.')
+                        st.rerun()
+
+                confirm_del = st.checkbox('I understand this permanently deletes this player account and removes them from all teams.',
+                                           key='confirm_del_player_{}'.format(pid))
+                if st.button('Delete player', key='del_player_{}'.format(pid), disabled=not confirm_del):
+                    s.delete_player(pid)
+                    st.success('Player deleted.')
+                    st.rerun()
         st.divider()
         st.markdown('##### Register a new player')
         with st.form('new_player'):
@@ -263,10 +323,45 @@ def manager_dashboard():
     with tabs[3]:
         org = s.get_org_details(org_id)
         st.subheader('Organisation details')
-        st.write('**Name:** {}'.format(org[1]))
-        st.write('**Location:** {}'.format(org[2]))
-        st.write('**Manager:** {}'.format(org[3]))
-        st.write('**Email:** {}'.format(org[4]))
+        with st.form('edit_org'):
+            new_name = st.text_input('Name', value=org[1])
+            new_location = st.text_input('Location', value=org[2])
+            new_manager = st.text_input('Manager name', value=org[3])
+            new_email = st.text_input('Email', value=org[4])
+            save = st.form_submit_button('Save changes')
+        if save:
+            err = s.update_org_details(org_id, new_name, new_location, new_manager, new_email)
+            if err:
+                st.error(err)
+            else:
+                st.session_state.org_name = new_name
+                st.success('Details updated.')
+                st.rerun()
+
+        st.divider()
+        st.markdown('##### Change your password')
+        with st.form('change_org_pw'):
+            p1 = st.text_input('New password', type='password')
+            p2 = st.text_input('Confirm new password', type='password')
+            save_pw = st.form_submit_button('Update password')
+        if save_pw:
+            if len(p1) < 4:
+                st.error('Password should be at least 4 characters.')
+            elif p1 != p2:
+                st.error('Passwords do not match.')
+            else:
+                s.change_org_password(org_id, p1)
+                st.success('Password updated.')
+
+        st.divider()
+        st.markdown('##### Danger zone')
+        st.caption('Deletes the whole school/club: every coach, player, team, position ranking and match. Cannot be undone.')
+        confirm_text = st.text_input('Type the organisation name ("{}") to confirm deletion'.format(org[1]))
+        if st.button('Delete organisation permanently', disabled=(confirm_text != org[1])):
+            s.delete_org(org_id)
+            st.success('Organisation deleted.')
+            logout()
+            st.rerun()
 
 
 # ---------------- Coach dashboard ----------------
@@ -299,7 +394,7 @@ def coach_dashboard():
         st.rerun()
 
     team_id = st.session_state.active_team_id
-    tabs = st.tabs(['Squad & positions', 'Matches', 'Match centre'])
+    tabs = st.tabs(['Squad & positions', 'Matches', 'Match centre', 'My profile'])
 
     with tabs[0]:
         squad_and_positions_tab(org_id, team_id)
@@ -307,6 +402,49 @@ def coach_dashboard():
         matches_tab(org_id, team_id)
     with tabs[2]:
         match_centre_tab(org_id, team_id)
+    with tabs[3]:
+        coach_profile_tab(coach_id)
+
+
+def coach_profile_tab(coach_id):
+    coach = s.get_coach(coach_id)
+    st.subheader('My profile')
+    with st.form('edit_coach_profile'):
+        new_name = st.text_input('Name', value=coach[2])
+        new_email = st.text_input('Email', value=coach[3])
+        save = st.form_submit_button('Save changes')
+    if save:
+        s.update_coach(coach_id, new_name, new_email)
+        st.success('Profile updated.')
+        st.rerun()
+
+    st.divider()
+    st.markdown('##### Change password')
+    with st.form('change_coach_pw'):
+        p1 = st.text_input('New password', type='password')
+        p2 = st.text_input('Confirm new password', type='password')
+        save_pw = st.form_submit_button('Update password')
+    if save_pw:
+        if len(p1) < 4:
+            st.error('Password should be at least 4 characters.')
+        elif p1 != p2:
+            st.error('Passwords do not match.')
+        else:
+            s.change_coach_password(coach_id, p1)
+            st.success('Password updated.')
+
+    st.divider()
+    st.markdown('##### Danger zone')
+    st.caption('Deletes your coach account. If you are the main coach of a team, ask your manager to reassign that team first.')
+    confirm = st.checkbox('I understand this permanently deletes my account.', key='confirm_del_self_coach')
+    if st.button('Delete my account', disabled=not confirm):
+        err = s.delete_coach(coach_id)
+        if err:
+            st.error(err)
+        else:
+            st.success('Account deleted.')
+            logout()
+            st.rerun()
 
 
 def squad_and_positions_tab(org_id, team_id):
@@ -542,6 +680,46 @@ def player_dashboard():
                 st.write('{} vs {} — {} at {}'.format(home_name, away_name, mdate, mloc))
         else:
             st.caption('No upcoming matches scheduled.')
+
+    st.divider()
+    with st.expander('My profile'):
+        with st.form('edit_player_profile'):
+            new_name = st.text_input('Name', value=player[2])
+            new_number = st.number_input('Squad number', min_value=1, max_value=99, step=1, value=player[3])
+            new_email = st.text_input('Email', value=player[4])
+            save = st.form_submit_button('Save changes')
+        if save:
+            err = s.update_player(player_id, new_name, int(new_number), new_email)
+            if err:
+                st.error(err)
+            else:
+                st.success('Profile updated.')
+                st.rerun()
+
+        st.divider()
+        st.markdown('##### Change password')
+        with st.form('change_player_pw'):
+            p1 = st.text_input('New password', type='password')
+            p2 = st.text_input('Confirm new password', type='password')
+            save_pw = st.form_submit_button('Update password')
+        if save_pw:
+            if len(p1) < 4:
+                st.error('Password should be at least 4 characters.')
+            elif p1 != p2:
+                st.error('Passwords do not match.')
+            else:
+                s.change_player_password(player_id, p1)
+                st.success('Password updated.')
+
+        st.divider()
+        st.markdown('##### Danger zone')
+        confirm = st.checkbox('I understand this permanently deletes my account and removes me from all teams.',
+                               key='confirm_del_self_player')
+        if st.button('Delete my account', disabled=not confirm):
+            s.delete_player(player_id)
+            st.success('Account deleted.')
+            logout()
+            st.rerun()
 
 
 # ---------------- Main ----------------

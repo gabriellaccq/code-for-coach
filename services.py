@@ -105,6 +105,12 @@ def get_player_teams(player_id):
 
 # ---------- Registering coaches / players / teams ----------
 
+def get_coach(coach_id):
+    cursor, conn = cur_conn()
+    cursor.execute('SELECT CoachID, OrgID, Name, Email FROM Coaches WHERE CoachID = ?', (coach_id,))
+    return cursor.fetchone()
+
+
 def register_coach(org_id, name, email):
     cursor, conn = cur_conn()
     coach_id = sql.insertCoach(cursor, conn, org_id, name, email, hash_password(DEFAULT_PASSWORD))
@@ -237,6 +243,114 @@ def get_player_positions_queue(team_id, player_id):
             if e['id'] == player_id:
                 result.append(pos_name)
     return result
+
+
+# ---------- Editing / deleting accounts ----------
+
+def update_org_details(org_id, name, location, manager_name, email):
+    cursor, conn = cur_conn()
+    if sql.checkNameInOrganisations(cursor, conn, name) > 0 and name != get_org_details(org_id)[1]:
+        return 'A school/club with that name is already registered.'
+    sql.updateOrgName(cursor, conn, name, org_id)
+    sql.updateOrgLocation(cursor, conn, location, org_id)
+    sql.updateOrgManager(cursor, conn, manager_name, org_id)
+    sql.updateOrgEmail(cursor, conn, email, org_id)
+    return None
+
+
+def change_org_password(org_id, new_password):
+    cursor, conn = cur_conn()
+    sql.updateOrgPassword(cursor, conn, hash_password(new_password), org_id)
+
+
+def delete_org(org_id):
+    """Deletes the whole school/club and everything under it. Irreversible."""
+    cursor, conn = cur_conn()
+    cursor.execute('SELECT TeamID FROM Teams WHERE OrgID = ?', (org_id,))
+    team_ids = [r[0] for r in cursor.fetchall()]
+    for team_id in team_ids:
+        delete_team(team_id)
+    cursor.execute('SELECT PlayerID FROM Players WHERE OrgID = ?', (org_id,))
+    for (player_id,) in cursor.fetchall():
+        delete_player(player_id)
+    cursor.execute('SELECT CoachID FROM Coaches WHERE OrgID = ?', (org_id,))
+    for (coach_id,) in cursor.fetchall():
+        cursor.execute('DELETE FROM CoachTeamLink WHERE CoachID = ?', (coach_id,))
+        cursor.execute('DELETE FROM Coaches WHERE CoachID = ?', (coach_id,))
+    cursor.execute('DELETE FROM Organisations WHERE OrgID = ?', (org_id,))
+    conn.commit()
+
+
+def update_coach(coach_id, name, email):
+    cursor, conn = cur_conn()
+    sql.updateCoachName(cursor, conn, name, coach_id)
+    sql.updateCoachEmail(cursor, conn, email, coach_id)
+
+
+def change_coach_password(coach_id, new_password):
+    cursor, conn = cur_conn()
+    sql.updateCoachPassword(cursor, conn, hash_password(new_password), coach_id)
+
+
+def delete_coach(coach_id):
+    """Returns an error string if the coach is the sole/main coach of a team
+    (reassign that team's main coach first), otherwise deletes the coach."""
+    cursor, conn = cur_conn()
+    cursor.execute('SELECT TeamID, Name FROM Teams WHERE CoachID = ?', (coach_id,))
+    main_of = cursor.fetchall()
+    if main_of:
+        names = ', '.join(t[1] for t in main_of)
+        return 'This coach is the main coach of: {}. Reassign the main coach for that team first.'.format(names)
+    cursor.execute('DELETE FROM CoachTeamLink WHERE CoachID = ?', (coach_id,))
+    cursor.execute('DELETE FROM Coaches WHERE CoachID = ?', (coach_id,))
+    conn.commit()
+    return None
+
+
+def update_player(player_id, name, number, email):
+    cursor, conn = cur_conn()
+    cursor.execute('SELECT COUNT(*) FROM Players WHERE Number = ? AND PlayerID != ?', (number, player_id))
+    if cursor.fetchone()[0] > 0:
+        return 'That squad number is already taken by another player.'
+    sql.updatePlayerName(cursor, conn, name, player_id)
+    sql.updatePlayerNumber(cursor, conn, number, player_id)
+    sql.updatePlayerEmail(cursor, conn, email, player_id)
+    return None
+
+
+def change_player_password(player_id, new_password):
+    cursor, conn = cur_conn()
+    sql.updatePlayerPassword(cursor, conn, hash_password(new_password), player_id)
+
+
+def delete_player(player_id):
+    cursor, conn = cur_conn()
+    cursor.execute('DELETE FROM PlayerTeamLink WHERE PlayerID = ?', (player_id,))
+    for position_name in logic.positionsList:
+        cursor.execute('DELETE FROM {}table WHERE PlayerID = ?'.format(position_name), (player_id,))
+    cursor.execute('DELETE FROM Players WHERE PlayerID = ?', (player_id,))
+    conn.commit()
+
+
+def update_team(team_id, name, coach_id, privacy_mode):
+    cursor, conn = cur_conn()
+    sql.updateTeamName(cursor, conn, name, team_id)
+    sql.updateTeamCoach(cursor, conn, coach_id, team_id)
+    sql.updateTeamPrivacyMode(cursor, conn, privacy_mode, team_id)
+    cursor.execute('SELECT COUNT(*) FROM CoachTeamLink WHERE CoachID = ? AND TeamID = ?', (coach_id, team_id))
+    if cursor.fetchone()[0] == 0:
+        sql.addCoachToTeam(cursor, conn, coach_id, team_id)
+
+
+def delete_team(team_id):
+    cursor, conn = cur_conn()
+    cursor.execute('DELETE FROM PlayerTeamLink WHERE TeamID = ?', (team_id,))
+    cursor.execute('DELETE FROM CoachTeamLink WHERE TeamID = ?', (team_id,))
+    for position_name in logic.positionsList:
+        cursor.execute('DELETE FROM {}table WHERE TeamID = ?'.format(position_name), (team_id,))
+    cursor.execute('DELETE FROM Matches WHERE TeamID = ? OR OpponentID = ?', (team_id, team_id))
+    cursor.execute('DELETE FROM Teams WHERE TeamID = ?', (team_id,))
+    conn.commit()
 
 
 # ---------- Matches ----------
